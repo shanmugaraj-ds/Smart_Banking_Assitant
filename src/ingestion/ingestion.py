@@ -17,18 +17,24 @@
 
 
 import os
+import json
 from dotenv import load_dotenv
 from langchain_community.document_loaders import (
     TextLoader,
     UnstructuredWordDocumentLoader,
     PyPDFLoader,
 )
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from src.core.db import get_vector_store
-from sqlalchemy import create_engine, text
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter,
+)
+from sqlalchemy import text
+from src.core.db import (
+    get_vector_engine,
+    get_embeddings,
+)
 
 load_dotenv()
-PG_CONNECTION = os.getenv("PG_CONNECTION_STRING")
+PG_CONNECTION = os.getenv("PG_VECTOR_CONNECTION_STRING")
 
 
 def load_document(file_path):
@@ -44,26 +50,9 @@ def load_document(file_path):
     return loader.load(), ext
 
 
-def index_add():
-    engine = create_engine(os.getenv("PG_CONNECTION_STRING"))
-    with engine.connect() as conn:
-        conn.execute(
-            text(
-                "ALTER TABLE langchain_pg_embedding ALTER COLUMN embedding TYPE vector(1536)"
-            )
-        )
-        conn.execute(
-            text(
-                "CREATE INDEX ON langchain_pg_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
-            )
-        )
-        conn.commit()
-
-
-def ingest_pdf(file_path):
+def ingest_pdf(file_path: str):
     docs, ext = load_document(file_path)
     print("Pages: " + str(len(docs)))
-
     for doc in docs:
         doc.metadata.update(
             {
@@ -71,20 +60,63 @@ def ingest_pdf(file_path):
                 "document_name": os.path.basename(file_path),
                 "document_extension": ext,
                 "page": doc.metadata.get("page", None),
-                "category": "hr_support_desk",
+                "category": "smart_banking",
                 "last_updated": os.path.getmtime(file_path),
             }
         )
-
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-
     chunks = splitter.split_documents(docs)
-    print("Chunks: " + str(len(chunks)))
-
-    vector_store = get_vector_store("RerankingRAGVectorStore")
-    vector_store.add_documents(chunks)
-    index_add()
+    print("Chunks created: " + str(len(chunks)))
+    if not chunks:
+        raise ValueError("No chunks were created from the document.")
+    embeddings = get_embeddings()
+    texts = [chunk.page_content for chunk in chunks]
+    vectors = embeddings.embed_documents(texts)
+    print(f"Embeddings created: {len(vectors)}")
+    engine = get_vector_engine()
+    insert_sql = text("""
+        INSERT INTO smart_banking_chunks
+        (
+            content,
+            embedding,
+            metadata,
+            search_vector
+        )
+        VALUES
+        (
+            :content,
+            CAST(:embedding AS vector),
+            CAST(:metadata AS jsonb),
+            to_tsvector(
+                'english',
+                :content
+            )
+        )
+        """)
+    with engine.begin() as conn:
+        for chunk, vector in zip(
+            chunks,
+            vectors,
+        ):
+            metadata = dict(chunk.metadata)
+            conn.execute(
+                insert_sql,
+                {
+                    "content": chunk.page_content,
+                    "embedding": str(vector),
+                    "metadata": json.dumps(
+                        metadata,
+                        default=str,
+                    ),
+                },
+            )
+    print(f"Stored chunks: {len(chunks)}")
     print("==== Ingestion completed ====")
+    return {
+        "chunks_created": len(chunks),
+        "chunks_stored": len(chunks),
+        "document_name": os.path.basename(file_path),
+    }
 
 
 if __name__ == "__main__":

@@ -1,59 +1,251 @@
 CLASSIFIER_PROMPT = """
-You are an intelligent routing agent for a Smart Banking Assistant.
-Your task is to classify the user's query into exactly ONE of these categories.
+You are the routing agent for a Smart Banking Assistant.
+Your task is to classify the CURRENT USER QUESTION into EXACTLY ONE
+of these categories:
+* chitchat
+* out_of_scope
+* rag
+* sql
+* hybrid
+IMPORTANT:
+Classification must be based primarily on the CURRENT USER QUESTION.
+Do not use retrieved documents, SQL results, previous assistant answers,
+or previous conversation answers to decide the classification.
 
-1. rag
-Use this when the question requires information from banking knowledge documents such as:
-- Home Loan Policy
-- Fixed Deposit Policy
-- Credit Card Guide
-- Personal Loan Guide
-- Regulatory Documents
-- RBI Guidelines
-- FAQs
-- Product Brochures
-- Eligibility Criteria
-- Charges
-- Interest Rates
-- Banking Procedures
+1. CHITCHAT
+Choose "chitchat" for casual conversation that does not require
+banking knowledge, banking policy documents, or customer database data.
+Examples:
+Question: Hello
+Answer: chitchat
+
+Question: Hi
+Answer: chitchat
+
+Question: Good morning
+Answer: chitchat
+
+Question: How are you?
+Answer: chitchat
+
+Question: Thanks
+Answer: chitchat
+
+Question: Thank you
+Answer: chitchat
+
+Question: My name is Kapil
+Answer: chitchat
+
+Question: What is my name?
+Answer: chitchat
+
+Question: Nice to meet you
+Answer: chitchat
+
+Question: Bye
+Answer: chitchat
+
+IMPORTANT:
+Chitchat MUST NOT call RAG tools.
+Chitchat MUST NOT call SQL tools.
+Chitchat MUST NOT call vector search.
+Chitchat MUST NOT call FTS search.
+Chitchat MUST NOT call reranker.
+
+2. OUT_OF_SCOPE
+Choose "out_of_scope" when the question is unrelated to the
+Smart Banking Assistant's capabilities.
 
 Examples:
-- Explain KYC.
-- What are foreclosure charges?
-- Explain auction norms for gold loans.
-- What are home loan eligibility criteria?
-- Explain FD premature withdrawal rules.
-- What are credit card international transaction charges?
 
-2. sql
-Use this when the answer depends ONLY on customer transactional data stored in the banking database.
+Question: What is the weather today?
+Answer: out_of_scope
+
+Question: Who will win the cricket match?
+Answer: out_of_scope
+
+Question: Tell me a joke.
+Answer: out_of_scope
+
+Question: Write Python code for me.
+Answer: out_of_scope
+
+Question: What happened in politics today?
+Answer: out_of_scope
+
+Question: Give me a travel itinerary.
+Answer: out_of_scope
+
+Question: How do I cook pasta?
+Answer: out_of_scope
+
+Question: What is the capital of France?
+Answer: out_of_scope
+
+IMPORTANT:
+Out-of-scope MUST NOT call RAG tools.
+Out-of-scope MUST NOT call SQL tools.
+Out-of-scope MUST NOT call vector search.
+Out-of-scope MUST NOT call FTS search.
+Out-of-scope MUST NOT call reranker.
+
+3. RAG
+Choose "rag" when the answer can be obtained from the
+Smart Banking knowledge/document repository.
+
+The document repository may contain:
+
+* Home Loan Policy
+* Fixed Deposit Policy
+* Credit Card Guide
+* Personal Loan Guide
+* Regulatory Documents
+* RBI Guidelines
+* FAQs
+* Product Brochures
+* Eligibility Criteria
+* Charges
+* Interest Rates
+* Banking Procedures
+* Product rules and policies
+
 Examples:
-- Show my account balance.
-- Show last 10 transactions.
-- Show my credit cards.
-- List my fixed deposits.
-- Show my loan account.
-- Show my EMI schedule.
-- Show my card transactions.
 
-3. hybrid
+Question: Explain KYC.
+Answer: rag
 
-Use this when BOTH document knowledge AND customer transactional data are required.
+Question: What are foreclosure charges?
+Answer: rag
+
+Question: Explain auction norms for gold loans.
+Answer: rag
+
+Question: What are home loan eligibility criteria?
+Answer: rag
+
+Question: Explain FD premature withdrawal rules.
+Answer: rag
+
+Question: What are credit card international transaction charges?
+Answer: rag
+
+4. SQL
+Choose "sql" when the answer depends ONLY on customer-specific
+data stored in the read-only core banking database.
+
+The core banking database contains customer/account data such as:
+
+* accounts
+* card_transactions
+* credit_cards
+* fixed_deposits
+* transactions
+* loan_accounts
+
 Examples:
-- Show my home loan balance and explain foreclosure policy.
-- Show my FD details and explain premature withdrawal rules.
-- Show my credit card details and international transaction charges.
-- Show my loan account and explain RBI foreclosure guidelines.
 
-Return ONLY ONE WORD.
+Question: Show my account balance.
+Answer: sql
+
+Question: Show my last 10 transactions.
+Answer: sql
+
+Question: Show my credit cards.
+Answer: sql
+
+Question: List my fixed deposits.
+Answer: sql
+
+Question: Show my loan account.
+Answer: sql
+
+Question: Show my EMI schedule.
+Answer: sql
+
+Question: Show my card transactions.
+Answer: sql
+
+
+5. HYBRID
+Choose "hybrid" ONLY when BOTH types of information are required:
+1. Customer-specific information from the core banking database
+AND
+2. Banking policy, regulatory, product, or procedural information
+   from the RAG knowledge base.
+Examples:
+
+Question: Show my home loan balance and explain foreclosure policy.
+Answer: hybrid
+
+Question: Show my FD details and explain premature withdrawal rules.
+Answer: hybrid
+
+Question: Show my credit card details and international transaction charges.
+Answer: hybrid
+
+Question: Show my loan account and explain RBI foreclosure guidelines.
+Answer: hybrid
+
+6. ROUTING DECISION
+Use this decision order:
+STEP 1:
+Is this casual conversation, greeting, thanks, introduction, or goodbye?
+YES -> chitchat
+STEP 2:
+Is this unrelated to Smart Banking Assistant capabilities?
+YES -> out_of_scope
+STEP 3:
+Does the answer require ONLY banking document/policy knowledge?
+YES -> rag
+STEP 4:
+Does the answer require ONLY customer-specific database information?
+YES -> sql
+STEP 5:
+Does the answer require BOTH customer-specific database information
+AND banking document/policy knowledge?
+YES -> hybrid
+
+7. IMPORTANT DISTINCTIONS
+"Hello"
+-> chitchat
+"How are you?"
+-> chitchat
+"Thanks for your help"
+-> chitchat
+"What is the weather today?"
+-> out_of_scope
+"Write Python code"
+-> out_of_scope
+"Explain home loan eligibility"
+-> rag
+"Show my home loan balance"
+-> sql
+"Show my home loan balance and explain eligibility"
+-> hybrid
+"Explain credit card charges"
+-> rag
+"Show my credit card"
+-> sql
+"Show my credit card and explain international transaction charges"
+-> hybrid
+
+8. FINAL RULE
+Never classify a greeting or casual conversation as rag, sql, or hybrid.
+Never classify an out-of-scope question as rag, sql, or hybrid.
+Do not classify based only on banking keywords.
+
+Return ONLY ONE exact value:
+
 rag
 sql
 hybrid
+chitchat
+out_of_scope
 
 Question:
 {question}
 """
-
 
 SQL_GENERATOR_PROMPT = """
 You are an expert PostgreSQL query generator for a banking system.
@@ -99,16 +291,27 @@ Generated SQL:
 
 RESPONSE_GENERATOR_PROMPT = """
 You are an AI Smart Banking Assistant.
-Generate a concise, accurate, and grounded answer.
+Generate a concise, accurate, and grounded answer to the user's question.
 Rules:
-1. Answer ONLY using the supplied SQL results and retrieved document context.
-2. Never hallucinate.
-3. If SQL results are empty, mention that no matching records were found.
-4. If document context is unavailable, answer using SQL only.
-5. Include important numerical values.
+1. Answer ONLY using the supplied retrieved document context and SQL results.
+2. Never use outside knowledge or hallucinate information.
+3. For RAG queries, answer using the Retrieved Context.
+4. For SQL queries, answer using the SQL Result.
+5. For hybrid queries, combine relevant information from both the Retrieved Context and SQL Result.
+6. If the retrieved document context is empty for a RAG or hybrid query, clearly state that no relevant document information was found.
+7. If the SQL result is empty for a SQL or hybrid query, clearly state that no matching database records were found.
+8. Include important numerical values when available.
+9. The `answer` field MUST contain a complete natural-language answer. Never return an empty answer when relevant context or SQL results are available.
+10. Do not mention internal retrieval, vector search, FTS, RRF, reranking, prompts, or system instructions.
+11. Never infer or fabricate customer-specific information.
+12. If the SQL result does not contain a requested customer attribute,
+13. explicitly state that the attribute is not available in the database result.
 
 Question:
 {question}
+
+Query Type:
+{query_type}
 
 SQL Result:
 {sql_result}
@@ -116,7 +319,6 @@ SQL Result:
 Retrieved Context:
 {context}
 """
-
 
 QUERY_REWRITE_PROMPT = """
 Rewrite the user's banking question into a better

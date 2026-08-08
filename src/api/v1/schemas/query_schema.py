@@ -1,5 +1,5 @@
 from typing import Literal, List, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class QueryClassification(BaseModel):
@@ -7,6 +7,8 @@ class QueryClassification(BaseModel):
         "rag",
         "sql",
         "hybrid",
+        "chitchat",
+        "out_of_scope",
     ]
 
 
@@ -20,7 +22,7 @@ class SQLValidation(BaseModel):
 
 class AgentResponse(BaseModel):
     answer: str
-    citations: List[str] = []
+    citations: List[str] = Field(default_factory=list)
     confidence_score: float
 
 
@@ -28,3 +30,13 @@ class RetrievedChunk(BaseModel):
     content: str
     score: float
     metadata: dict[str, Any]
+
+
+class QueryRequest(BaseModel):
+    question: str
+    chat_history: list = []
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    query_type: str

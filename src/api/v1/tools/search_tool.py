@@ -1,5 +1,5 @@
 from src.api.v1.states.rag_state import RAGState
-from src.core.db import get_sql_database, get_vector_engine, get_vector_store
+from src.core.db import get_vector_engine, get_embeddings
 from sqlalchemy import text
 from collections import defaultdict
 from src.core.llm import get_cohere_client, get_llm
@@ -11,29 +11,50 @@ RRF_K = 60
 
 
 def vector_search_tool(state: RAGState) -> RAGState:
-    """
-    Performs semantic similarity search against PGVector.
-    """
-    vector_store = get_vector_store()
+    engine = get_vector_engine()
+    embeddings = get_embeddings()
+    query = state["search_query"]
     try:
-        docs = vector_store.similarity_search_with_score(
-            query=state["search_query"],
-            k=20,
-        )
-    except Exception:
+        query_embedding = embeddings.embed_query(query)
+        sql = text("""
+            SELECT
+                id,
+                content,
+                metadata,
+                1 - (
+                    embedding <=> CAST(
+                        :embedding AS vector
+                    )
+                ) AS score
+            FROM smart_banking_chunks
+            ORDER BY
+                embedding <=> CAST(
+                    :embedding AS vector
+                )
+            LIMIT :k
+            """)
+        with engine.connect() as conn:
+            result = conn.execute(
+                sql,
+                {
+                    "embedding": str(query_embedding),
+                    "k": 20,
+                },
+            )
+            chunks = []
+            for row in result:
+                chunks.append(
+                    {
+                        "content": row.content,
+                        "metadata": row.metadata,
+                        "score": float(row.score),
+                        "retrieval_method": "vector",
+                    }
+                )
+        state["retrieved_chunks"] = chunks
+    except Exception as e:
+        print(f"Vector search error: {e}")
         state["retrieved_chunks"] = []
-        return state
-
-    retrieved_chunks = []
-    for doc, score in docs:
-        retrieved_chunks.append(
-            {
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "score": float(score),
-            }
-        )
-    state["retrieved_chunks"] = retrieved_chunks
     return state
 
 
@@ -41,8 +62,8 @@ def fts_search_tool(state: RAGState) -> RAGState:
     """
     Performs PostgreSQL Full-Text Search.
     """
-    db = get_vector_engine()
     engine = get_vector_engine()
+    query = state["search_query"]
     sql = text("""
         SELECT
             content,
@@ -54,50 +75,60 @@ def fts_search_tool(state: RAGState) -> RAGState:
         ORDER BY score DESC
         LIMIT :k
         """)
-    with engine.connect() as conn:
-        result = conn.execute(
-            sql,
-            {
-                "query": state["search_query"],
-                "k": 20,
-            },
-        )
-        state["fts_chunks"] = [
-            {
-                "content": row.content,
-                "metadata": row.metadata,
-                "score": float(row.score),
-            }
-            for row in result
-        ]
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(
+                sql,
+                {
+                    "query": query,
+                    "k": 20,
+                },
+            )
+            state["fts_chunks"] = [
+                {
+                    "content": row.content,
+                    "metadata": row.metadata,
+                    "score": float(row.score),
+                    "retrieval_method": "fts",
+                }
+                for row in result
+            ]
+    except Exception as e:
+        print(f"FTS search error: {e}")
+        state["fts_chunks"] = []
     return state
 
 
 def hybrid_search_tool(state: RAGState) -> RAGState:
     """
-    Combines vector search and FTS search results using
-    Reciprocal Rank Fusion (RRF).
+    Combines Vector Search and FTS using Reciprocal Rank Fusion.
+    Produces top 20 hybrid candidates.
     """
     fused_scores = defaultdict(float)
     chunk_lookup = {}
-    # Vector Search Results
-    for rank, chunk in enumerate(state["retrieved_chunks"], start=1):
+    for rank, chunk in enumerate(
+        state.get("retrieved_chunks", []),
+        start=1,
+    ):
         key = chunk["content"]
         fused_scores[key] += 1 / (RRF_K + rank)
-        chunk_lookup[key] = chunk
-    # FTS Search Results
-    for rank, chunk in enumerate(state["fts_chunks"], start=1):
+        chunk_lookup[key] = chunk.copy()
+    for rank, chunk in enumerate(
+        state.get("fts_chunks", []),
+        start=1,
+    ):
         key = chunk["content"]
         fused_scores[key] += 1 / (RRF_K + rank)
-        chunk_lookup[key] = chunk
+        if key not in chunk_lookup:
+            chunk_lookup[key] = chunk.copy()
     ranked_chunks = sorted(
         fused_scores.items(),
-        key=lambda x: x[1],
+        key=lambda item: item[1],
         reverse=True,
     )
     hybrid_chunks = []
     for content, score in ranked_chunks[:20]:
-        chunk = chunk_lookup[content]
+        chunk = chunk_lookup[content].copy()
         chunk["rrf_score"] = score
         chunk["retrieval_method"] = "hybrid"
         hybrid_chunks.append(chunk)
@@ -109,7 +140,9 @@ def reranker_tool(state: RAGState) -> RAGState:
     """
     Re-ranks hybrid search results using Cohere Rerank.
     """
-    chunks = state["hybrid_chunks"]
+    chunks = state.get("hybrid_chunks", [])
+    if isinstance(chunks, dict):
+        chunks = chunks.get("chunks", [])
     if not chunks:
         state["reranked_chunks"] = []
         return state
@@ -124,21 +157,26 @@ def reranker_tool(state: RAGState) -> RAGState:
     for result in response.results:
         chunk = chunks[result.index].copy()
         chunk["rerank_score"] = float(result.relevance_score)
+        chunk["retrieval_method"] = "reranked"
         reranked_chunks.append(chunk)
     state["reranked_chunks"] = reranked_chunks
     return state
 
 
 RETRY_THRESHOLD = float(os.getenv("RETRY_THRESHOLD", "0.50"))
-MAX_RETRIES = int(os.getenv("MAX_RETRIES", "1"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
 
 
 def rewrite_query(state: RAGState) -> str:
     llm = get_llm()
     prompt = ChatPromptTemplate.from_template(QUERY_REWRITE_PROMPT)
-
     chain = prompt | llm
-    result = chain.invoke({"question": state["question"]})
+    result = chain.invoke(
+        {
+            "question": state["question"],
+            "search_query": state["search_query"],
+        }
+    )
     return result.content.strip()
 
 
@@ -159,18 +197,32 @@ def retry_tool(state: RAGState) -> RAGState:
         # Preserve the original question.
         state["search_query"] = rewritten_query
     else:
-        state["search_query"] = state["question"]
+        pass
     return state
 
 
 def search_tool(state: RAGState) -> RAGState:
-    while True:
-        state = vector_search_tool(state)
-        state = fts_search_tool(state)
-        state = hybrid_search_tool(state)
-        state = reranker_tool(state)
-        previous_retry_count = state["retry_count"]
-        state = retry_tool(state)
-        if state["retry_count"] == previous_retry_count:
-            break
+    """
+    Complete hybrid retrieval pipeline.
+
+    1. Vector Search -> Top 20
+    2. FTS Search -> Top 20
+    3. RRF Hybrid Fusion -> Top 20
+    4. Cohere Reranker -> Top 5
+    """
+    state = vector_search_tool(state)
+    print("VECTOR:", len(state.get("retrieved_chunks", [])))
+    state = fts_search_tool(state)
+    print("FTS:", len(state.get("fts_chunks", [])))
+    state = hybrid_search_tool(state)
+    print("HYBRID:", len(state.get("hybrid_chunks", [])))
+    state = reranker_tool(state)
+    print("RERANKED:", len(state.get("reranked_chunks", [])))
+    print(
+        "RERANK SCORES:",
+        [
+            round(chunk.get("rerank_score", 0.0), 4)
+            for chunk in state.get("reranked_chunks", [])
+        ],
+    )
     return state

@@ -9,10 +9,8 @@ load_dotenv()
 def get_llm(
     temperature: float = 0,
 ) -> ChatOpenAI:
-
     model = os.getenv("OPENAI_MODEL")
     api_key = os.getenv("OPENAI_API_KEY")
-
     if not model:
         raise ValueError("OPENAI_MODEL is missing.")
     if not api_key:

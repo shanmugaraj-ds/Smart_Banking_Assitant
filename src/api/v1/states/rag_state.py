@@ -1,7 +1,7 @@
 from typing import TypedDict, List, Dict, Any
 
 
-class RAGState(TypedDict):
+class RAGState(TypedDict, total=False):
     question: str  # User Input
     search_query: str
     query_type: str  # rag | sql | hybrid
@@ -19,3 +19,7 @@ class RAGState(TypedDict):
     confidence_score: float  # Final Response
     retry_count: int  # Retry
     trace_id: str  # LangSmith
+    max_retries: int
+    sql_answer: str
+    rag_answer: str
+    final_context: dict

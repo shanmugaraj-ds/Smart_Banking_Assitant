@@ -1,6 +1,22 @@
-def main():
-    print("Hello from smart-banking-assistant!")
+from fastapi import FastAPI
+from src.api.v1.routes import query
+from src.api.v1.routes import upload_routes
+
+# from src.api.v1.routes import sql_route
+
+app = FastAPI()
 
 
-if __name__ == "__main__":
-    main()
+@app.get("/")
+def root():
+    return {"message": "Smart Banking Assistant"}
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+
+app.include_router(query.router)
+# app.include_router(sql_route.router)
+app.include_router(upload_routes.router)
