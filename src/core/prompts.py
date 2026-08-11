@@ -2,7 +2,7 @@ CLASSIFIER_PROMPT = """
 You are the routing agent for a Smart Banking Assistant.
 Your task is to classify the CURRENT USER QUESTION into EXACTLY ONE
 of these categories:
-* chitchat
+* conversation
 * out_of_scope
 * rag
 * sql
@@ -12,46 +12,46 @@ Classification must be based primarily on the CURRENT USER QUESTION.
 Do not use retrieved documents, SQL results, previous assistant answers,
 or previous conversation answers to decide the classification.
 
-1. CHITCHAT
-Choose "chitchat" for casual conversation that does not require
+1. conversation
+Choose "conversation" for casual conversation that does not require
 banking knowledge, banking policy documents, or customer database data.
 Examples:
 Question: Hello
-Answer: chitchat
+Answer: conversation
 
 Question: Hi
-Answer: chitchat
+Answer: conversation
 
 Question: Good morning
-Answer: chitchat
+Answer: conversation
 
 Question: How are you?
-Answer: chitchat
+Answer: conversation
 
 Question: Thanks
-Answer: chitchat
+Answer: conversation
 
 Question: Thank you
-Answer: chitchat
+Answer: conversation
 
-Question: My name is Kapil
-Answer: chitchat
+Question: My name is John
+Answer: conversation
 
 Question: What is my name?
-Answer: chitchat
+Answer: conversation
 
 Question: Nice to meet you
-Answer: chitchat
+Answer: conversation
 
 Question: Bye
-Answer: chitchat
+Answer: conversation
 
 IMPORTANT:
-Chitchat MUST NOT call RAG tools.
-Chitchat MUST NOT call SQL tools.
-Chitchat MUST NOT call vector search.
-Chitchat MUST NOT call FTS search.
-Chitchat MUST NOT call reranker.
+conversation MUST NOT call RAG tools.
+conversation MUST NOT call SQL tools.
+conversation MUST NOT call vector search.
+conversation MUST NOT call FTS search.
+conversation MUST NOT call reranker.
 
 2. OUT_OF_SCOPE
 Choose "out_of_scope" when the question is unrelated to the
@@ -91,24 +91,18 @@ Out-of-scope MUST NOT call FTS search.
 Out-of-scope MUST NOT call reranker.
 
 3. RAG
-Choose "rag" when the answer can be obtained from the
-Smart Banking knowledge/document repository.
+Use RAG when the query requires information from banking documents,
+products, policies, procedures, FAQs, loan details, card details,
+terms and conditions, eligibility, documentation requirements,
+or regulatory information.
 
-The document repository may contain:
-
-* Home Loan Policy
-* Fixed Deposit Policy
-* Credit Card Guide
-* Personal Loan Guide
-* Regulatory Documents
-* RBI Guidelines
-* FAQs
-* Product Brochures
-* Eligibility Criteria
-* Charges
-* Interest Rates
-* Banking Procedures
-* Product rules and policies
+Examples:
+- Home loan products
+- Gold loan auction rules
+- Credit card eligibility
+- Required documents for personal loan
+- Loan tenure details
+- KYC requirements
 
 Examples:
 
@@ -208,11 +202,11 @@ YES -> hybrid
 
 7. IMPORTANT DISTINCTIONS
 "Hello"
--> chitchat
+-> conversation
 "How are you?"
--> chitchat
+-> conversation
 "Thanks for your help"
--> chitchat
+-> conversation
 "What is the weather today?"
 -> out_of_scope
 "Write Python code"
@@ -230,6 +224,16 @@ YES -> hybrid
 "Show my credit card and explain international transaction charges"
 -> hybrid
 
+
+-> Short banking keywords must NOT be classified as out_of_scope.
+Examples:
+"Home Loan" → rag
+"Credit Card" → rag
+"KYC" → rag
+"Gold Loan" → rag
+"Loan" → rag
+"PAN Card" → rag
+
 8. FINAL RULE
 Never classify a greeting or casual conversation as rag, sql, or hybrid.
 Never classify an out-of-scope question as rag, sql, or hybrid.
@@ -246,6 +250,7 @@ out_of_scope
 Question:
 {question}
 """
+
 
 SQL_GENERATOR_PROMPT = """
 You are an expert PostgreSQL query generator for a banking system.
@@ -320,16 +325,25 @@ Retrieved Context:
 {context}
 """
 
+
 QUERY_REWRITE_PROMPT = """
 Rewrite the user's banking question into a better
 search query for a banking knowledge base.
-The rewritten query should:
-- preserve the user's original intent
-- include important banking terminology
-- remove unnecessary conversational wording
+Generate exactly 2 new alternate search query.
+Rules:
+- Must be different from all previous queries.
+- Preserve the user's intent.
+- Use alternative terminology.
+- Return only the query.
 - be suitable for semantic and keyword search
 
 Original question:
 {question}
 Return only the rewritten search query.
+
+Current search query:
+{search_query}
+
+Previous alternate queries:
+{previous_queries}
 """

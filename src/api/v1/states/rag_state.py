@@ -20,6 +20,4 @@ class RAGState(TypedDict, total=False):
     retry_count: int  # Retry
     trace_id: str  # LangSmith
     max_retries: int
-    sql_answer: str
-    rag_answer: str
     final_context: dict

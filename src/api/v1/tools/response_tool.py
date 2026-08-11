@@ -6,16 +6,11 @@ from src.core.prompts import RESPONSE_GENERATOR_PROMPT
 
 
 def response_generator_tool(state: RAGState) -> RAGState:
-    """
-    Generates the grounded response using:
-    - RAG context for RAG queries
-    - SQL results for SQL queries
-    - Both for hybrid queries
-    """
-    context = ""
     reranked_chunks = state.get("reranked_chunks", [])
-    if reranked_chunks:
-        context = "\n\n".join(chunk["content"] for chunk in reranked_chunks)
+    print("RERANKED CHUNKS:", len(reranked_chunks))
+    context = "\n\n".join(chunk["content"] for chunk in reranked_chunks)
+    print("CONTEXT LENGTH:", len(context))
+    print("SQL RESULT:", state.get("sql_result", []))
     llm = get_llm()
     structured_llm = llm.with_structured_output(AgentResponse)
     prompt = ChatPromptTemplate.from_template(RESPONSE_GENERATOR_PROMPT)
@@ -28,25 +23,8 @@ def response_generator_tool(state: RAGState) -> RAGState:
             "sql_result": state.get("sql_result", []),
         }
     )
-    print("QUERY TYPE:", state["query_type"])
-    print("QUESTION:", state["question"])
-    print("CONTEXT LENGTH:", len(context))
-    print("SQL RESULT:", state.get("sql_result", []))
-    print("RAG RESULT:", result)
-    print("RESULT ANSWER:", repr(result.answer))
-    print("RESULT CITATIONS:", result.citations)
-    print("RESULT CONFIDENCE:", result.confidence_score)
+    print("RAW RESULT:", result)
     state["answer"] = result.answer
-    generated_answer = result.answer.strip()
-    # Store according to query type
-    if state["query_type"] == "rag":
-        state["rag_answer"] = generated_answer
-    elif state["query_type"] == "sql":
-        state["sql_answer"] = generated_answer
-    elif state["query_type"] == "hybrid":
-        # For hybrid, the LLM receives both RAG + SQL
-        # and generates one combined answer.
-        state["rag_answer"] = generated_answer
     state["citations"] = result.citations
     state["confidence_score"] = result.confidence_score
     return state

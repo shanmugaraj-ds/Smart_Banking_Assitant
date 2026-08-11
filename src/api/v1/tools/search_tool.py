@@ -1,13 +1,15 @@
+from collections import defaultdict
+import os
+from sqlalchemy import text
 from src.api.v1.states.rag_state import RAGState
 from src.core.db import get_vector_engine, get_embeddings
-from sqlalchemy import text
-from collections import defaultdict
 from src.core.llm import get_cohere_client, get_llm
-from langchain_core.prompts import ChatPromptTemplate
 from src.core.prompts import QUERY_REWRITE_PROMPT
-import os
+from langchain_core.prompts import ChatPromptTemplate
 
 RRF_K = 60
+RETRY_THRESHOLD = float(os.getenv("RETRY_THRESHOLD", "0.50"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
 
 
 def vector_search_tool(state: RAGState) -> RAGState:
@@ -32,7 +34,7 @@ def vector_search_tool(state: RAGState) -> RAGState:
                     :embedding AS vector
                 )
             LIMIT :k
-            """)
+        """)
         with engine.connect() as conn:
             result = conn.execute(
                 sql,
@@ -46,11 +48,12 @@ def vector_search_tool(state: RAGState) -> RAGState:
                 chunks.append(
                     {
                         "content": row.content,
-                        "metadata": row.metadata,
+                        "metadata": row.metadata or {},
                         "score": float(row.score),
                         "retrieval_method": "vector",
                     }
                 )
+
         state["retrieved_chunks"] = chunks
     except Exception as e:
         print(f"Vector search error: {e}")
@@ -59,22 +62,29 @@ def vector_search_tool(state: RAGState) -> RAGState:
 
 
 def fts_search_tool(state: RAGState) -> RAGState:
-    """
-    Performs PostgreSQL Full-Text Search.
-    """
     engine = get_vector_engine()
     query = state["search_query"]
     sql = text("""
         SELECT
+            id,
             content,
             metadata,
-            ts_rank(search_vector,
-                    plainto_tsquery(:query)) AS score
+            ts_rank(
+                search_vector,
+                plainto_tsquery(
+                    'english',
+                    :query
+                )
+            ) AS score
         FROM smart_banking_chunks
-        WHERE search_vector @@ plainto_tsquery(:query)
+        WHERE search_vector @@
+            plainto_tsquery(
+                'english',
+                :query
+            )
         ORDER BY score DESC
         LIMIT :k
-        """)
+    """)
     try:
         with engine.connect() as conn:
             result = conn.execute(
@@ -87,7 +97,7 @@ def fts_search_tool(state: RAGState) -> RAGState:
             state["fts_chunks"] = [
                 {
                     "content": row.content,
-                    "metadata": row.metadata,
+                    "metadata": row.metadata or {},
                     "score": float(row.score),
                     "retrieval_method": "fts",
                 }
@@ -100,10 +110,6 @@ def fts_search_tool(state: RAGState) -> RAGState:
 
 
 def hybrid_search_tool(state: RAGState) -> RAGState:
-    """
-    Combines Vector Search and FTS using Reciprocal Rank Fusion.
-    Produces top 20 hybrid candidates.
-    """
     fused_scores = defaultdict(float)
     chunk_lookup = {}
     for rank, chunk in enumerate(
@@ -137,12 +143,15 @@ def hybrid_search_tool(state: RAGState) -> RAGState:
 
 
 def reranker_tool(state: RAGState) -> RAGState:
-    """
-    Re-ranks hybrid search results using Cohere Rerank.
-    """
-    chunks = state.get("hybrid_chunks", [])
+    chunks = state.get(
+        "hybrid_chunks",
+        [],
+    )
     if isinstance(chunks, dict):
-        chunks = chunks.get("chunks", [])
+        chunks = chunks.get(
+            "chunks",
+            [],
+        )
     if not chunks:
         state["reranked_chunks"] = []
         return state
@@ -163,66 +172,105 @@ def reranker_tool(state: RAGState) -> RAGState:
     return state
 
 
-RETRY_THRESHOLD = float(os.getenv("RETRY_THRESHOLD", "0.50"))
-MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
-
-
 def rewrite_query(state: RAGState) -> str:
     llm = get_llm()
     prompt = ChatPromptTemplate.from_template(QUERY_REWRITE_PROMPT)
     chain = prompt | llm
+    previous_queries = state.get("rewritten_queries", [])
     result = chain.invoke(
         {
             "question": state["question"],
             "search_query": state["search_query"],
+            "previous_queries": "\n".join(previous_queries),
         }
     )
     return result.content.strip()
 
 
 def retry_tool(state: RAGState) -> RAGState:
-    """
-    Determines whether retrieval should be retried.
-    """
-    reranked_chunks = state["reranked_chunks"]
+    reranked_chunks = state.get(
+        "reranked_chunks",
+        [],
+    )
     if not reranked_chunks:
         should_retry = True
     else:
-        best_score = max(chunk.get("rerank_score", 0.0) for chunk in reranked_chunks)
+        best_score = max(
+            chunk.get(
+                "rerank_score",
+                0.0,
+            )
+            for chunk in reranked_chunks
+        )
+        print(
+            "BEST RERANK SCORE:",
+            round(best_score, 4),
+        )
         should_retry = best_score < RETRY_THRESHOLD
     if should_retry and state["retry_count"] < MAX_RETRIES:
+        state["retry_count"] += 1
         rewritten_query = rewrite_query(state)
         state["rewritten_queries"].append(rewritten_query)
-        state["retry_count"] += 1
-        # Preserve the original question.
         state["search_query"] = rewritten_query
-    else:
-        pass
+        print(f"RETRY #{state['retry_count']}: " f"{rewritten_query}")
     return state
 
 
 def search_tool(state: RAGState) -> RAGState:
-    """
-    Complete hybrid retrieval pipeline.
-
-    1. Vector Search -> Top 20
-    2. FTS Search -> Top 20
-    3. RRF Hybrid Fusion -> Top 20
-    4. Cohere Reranker -> Top 5
-    """
     state = vector_search_tool(state)
-    print("VECTOR:", len(state.get("retrieved_chunks", [])))
     state = fts_search_tool(state)
-    print("FTS:", len(state.get("fts_chunks", [])))
     state = hybrid_search_tool(state)
-    print("HYBRID:", len(state.get("hybrid_chunks", [])))
     state = reranker_tool(state)
-    print("RERANKED:", len(state.get("reranked_chunks", [])))
+    print(
+        "VECTOR:",
+        len(
+            state.get(
+                "retrieved_chunks",
+                [],
+            )
+        ),
+    )
+    print(
+        "FTS:",
+        len(
+            state.get(
+                "fts_chunks",
+                [],
+            )
+        ),
+    )
+    print(
+        "HYBRID:",
+        len(
+            state.get(
+                "hybrid_chunks",
+                [],
+            )
+        ),
+    )
+    print(
+        "RERANKED:",
+        len(
+            state.get(
+                "reranked_chunks",
+                [],
+            )
+        ),
+    )
     print(
         "RERANK SCORES:",
         [
-            round(chunk.get("rerank_score", 0.0), 4)
-            for chunk in state.get("reranked_chunks", [])
+            round(
+                c.get(
+                    "rerank_score",
+                    0,
+                ),
+                4,
+            )
+            for c in state.get(
+                "reranked_chunks",
+                [],
+            )
         ],
     )
     return state

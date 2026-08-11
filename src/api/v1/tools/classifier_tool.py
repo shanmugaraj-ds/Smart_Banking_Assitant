@@ -8,7 +8,7 @@ from src.core.prompts import CLASSIFIER_PROMPT
 def classifier_tool(state: RAGState) -> RAGState:
     """
     Classifies the user's query as:
-    chitchat, out of scope, rag, sql, or hybrid.
+    conversation, out of scope, rag, sql, or hybrid.
     """
     llm = get_llm()
     structured_llm = llm.with_structured_output(QueryClassification)

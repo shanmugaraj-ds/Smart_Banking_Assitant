@@ -1,70 +1,40 @@
 import os
-import uuid
-import requests
+import tempfile
 from fastapi import UploadFile
 from src.ingestion.ingestion import ingest_pdf
 
-UPLOAD_DIR = "data/uploads"
 
-
-def download_pdf_from_url(pdf_url: str) -> str:
-    os.makedirs(
-        UPLOAD_DIR,
-        exist_ok=True,
-    )
-    response = requests.get(
-        pdf_url,
-        timeout=60,
-    )
-    response.raise_for_status()
-    filename = f"{uuid.uuid4()}.pdf"
-    file_path = os.path.join(
-        UPLOAD_DIR,
-        filename,
-    )
-    with open(
-        file_path,
-        "wb",
-    ) as file:
-        file.write(response.content)
-    return file_path
-
-
-def upload_and_ingest_pdf(
-    pdf_url: str,
-):
-    file_path = download_pdf_from_url(pdf_url)
-    result = ingest_pdf(file_path)
-    return result
-
-
-def save_uploaded_pdf(
-    file: UploadFile,
-) -> str:
-    os.makedirs(
-        UPLOAD_DIR,
-        exist_ok=True,
-    )
-    filename = f"{uuid.uuid4()}.pdf"
-    file_path = os.path.join(
-        UPLOAD_DIR,
-        filename,
-    )
-    with open(
-        file_path,
-        "wb",
-    ) as output_file:
-        while True:
-            chunk = file.file.read(1024 * 1024)
-            if not chunk:
-                break
-            output_file.write(chunk)
-    return file_path
-
-
-def save_and_ingest_uploaded_pdf(
+async def upload_and_ingest_pdf(
     file: UploadFile,
 ):
-    file_path = save_uploaded_pdf(file)
-    result = ingest_pdf(file_path)
-    return result
+    if not file.filename:
+        raise ValueError("No file was provided.")
+    if not file.filename.lower().endswith(".pdf"):
+        raise ValueError("Only PDF files are supported.")
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise ValueError("Uploaded PDF is empty.")
+    print(f"Received PDF: {file.filename}")
+    print(f"PDF size: {len(pdf_bytes)} bytes")
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".pdf",
+        ) as temp_file:
+            temp_file.write(pdf_bytes)
+            temp_path = temp_file.name
+        print(f"Temporary PDF: {temp_path}")
+        result = ingest_pdf(temp_path)
+        return {
+            "status": "success",
+            "message": ("PDF uploaded and ingested successfully."),
+            "file_name": file.filename,
+            "pages": result["pages"],
+            "chunks": result["chunks"],
+            "embeddings": result["embeddings"],
+        }
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+            print("Temporary PDF removed.")

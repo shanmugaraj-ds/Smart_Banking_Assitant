@@ -7,7 +7,7 @@ class QueryClassification(BaseModel):
         "rag",
         "sql",
         "hybrid",
-        "chitchat",
+        "conversation",
         "out_of_scope",
     ]
 
