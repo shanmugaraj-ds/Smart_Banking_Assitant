@@ -69,7 +69,7 @@ with st.sidebar:
     # Clear Chat
     st.divider()
     if st.button(
-        "🗑️ Clear Chat",
+        "Clear Chat",
         use_container_width=True,
     ):
         st.session_state.messages = []
@@ -79,8 +79,19 @@ for message in st.session_state.messages:
     role = message["role"]
     with st.chat_message(role):
         st.markdown(message["content"])
-        if role == "assistant" and message.get("query_type"):
-            st.caption(f"Query type: " f"{message['query_type'].upper()}")
+        if role == "assistant":
+            images = message.get("images", [])
+            if images:
+                st.subheader("Related Images")
+                for image_url in images:
+                    full_image_url = f"http://127.0.0.1:8000{image_url}"
+                    st.image(
+                        full_image_url,
+                        caption="Related image",
+                        use_container_width=True,
+                    )
+            if message.get("query_type"):
+                st.caption(f"Query type: " f"{message['query_type'].upper()}")
 question = st.chat_input("Ask your banking question...")
 # PROCESS QUESTION
 if question:
@@ -101,6 +112,7 @@ if question:
         {
             "role": message["role"],
             "content": message["content"],
+            "images": message.get("images", []),
         }
         for message in st.session_state.messages
     ]
@@ -117,26 +129,30 @@ if question:
                 )
                 response.raise_for_status()
                 result = response.json()
-                answer = result.get(
-                    "answer",
-                    "",
-                )
-                query_type = result.get(
-                    "query_type",
-                    "",
-                )
-                citations = result.get(
-                    "citations",
-                    [],
-                )
-                confidence_score = result.get(
-                    "confidence_score",
-                    None,
-                )
+                answer = result.get("answer", "")
+                query_type = result.get("query_type", "")
+                citations = result.get("citations", [])
+                images = result.get("images", [])
+                confidence_score = result.get("confidence_score", None)
                 if answer:
                     st.markdown(answer)
                 else:
                     st.warning("No answer was generated.")
+                if images:
+                    st.subheader("Related Images")
+                    for image_url in images:
+                        if image_url.startswith("[") and "](" in image_url:
+                            image_url = image_url.split("](")[1].rstrip(")")
+                        if image_url.startswith("/"):
+                            full_image_url = f"http://127.0.0.1:8000{image_url}"
+                        else:
+                            full_image_url = image_url
+                        print("STREAMLIT IMAGE URL:", full_image_url)
+                        st.image(
+                            full_image_url,
+                            caption="Related image",
+                            use_container_width=True,
+                        )
                 if query_type:
                     st.caption(f"Query type: " f"{query_type.upper()}")
                 if citations:
@@ -151,6 +167,7 @@ if question:
                         "content": answer,
                         "query_type": query_type,
                         "citations": citations,
+                        "images": images,
                         "confidence_score": confidence_score,
                     }
                 )

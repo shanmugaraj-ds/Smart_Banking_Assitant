@@ -40,3 +40,6 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     query_type: str
+    citations: list[str] = []
+    images: list[str] = []
+    confidence_score: float = 0.0

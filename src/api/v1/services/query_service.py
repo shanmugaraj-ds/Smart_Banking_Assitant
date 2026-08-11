@@ -24,4 +24,10 @@ def query_documents(question):
             "trace_id": "",
         }
     )
-    return {"answer": response["answer"], "query_type": response["query_type"]}
+    return {
+        "answer": response.get("answer", ""),
+        "query_type": response.get("query_type", ""),
+        "citations": response.get("citations", []),
+        "images": response.get("response_sources", []),
+        "confidence_score": response.get("confidence_score", 0),
+    }

@@ -1,6 +1,11 @@
 import json
 import os
 import time
+import pymupdf
+import pdfplumber
+import base64
+import pytesseract
+from openai import OpenAI
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -10,14 +15,14 @@ from src.core.db import (
     get_vector_engine,
     initialize_smart_banking_db,
 )
-import pymupdf
-import pdfplumber
 from PIL import Image
 from io import BytesIO
 from langchain_core.documents import Document
 
 load_dotenv()
 
+vision_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+VISION_MODEL = os.getenv("OPENAI_VISION_MODEL")
 
 COLLECTION_NAME = "smart_banking_chunks"
 
@@ -154,52 +159,118 @@ def convert_table_to_markdown(table):
 def extract_images(file_path):
     image_chunks = []
     pdf = pymupdf.open(file_path)
+    output_dir = "data/images"
+    os.makedirs(output_dir, exist_ok=True)
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
     for page_number, page in enumerate(pdf):
-        images = page.get_images()
+        images = page.get_images(full=True)
         for image_index, img in enumerate(images):
             xref = img[0]
             base_image = pdf.extract_image(xref)
             image_bytes = base_image["image"]
-            image_ref = f"{file_path}" f"_page_{page_number}" f"_image_{image_index}"
+            image_ext = base_image["ext"]
+            image_path = os.path.join(
+                output_dir,
+                f"{base_name}_page_{page_number + 1}_image_{image_index + 1}.{image_ext}",
+            )
+            with open(image_path, "wb") as image_file:
+                image_file.write(image_bytes)
             image_chunks.append(
                 {
-                    "content": f"Image found on page {page_number+1}",
-                    "image_ref": image_ref,
+                    "image_path": image_path,
                     "page": page_number + 1,
+                    "image_index": image_index + 1,
                 }
             )
+    pdf.close()
     print("Images extracted:", len(image_chunks))
     return image_chunks
 
 
-def generate_image_caption(image_chunk):
+def build_image_url(image_path: str) -> str:
+    filename = os.path.basename(image_path)
+    return f"/images/{filename}"
+
+
+def generate_image_caption(image_path):
     """
-    Future:
-    GPT-4o Vision / Gemini Vision
+    Generate a caption for an extracted image using the vision model.
     """
-    return "Image contains banking related " "visual information."
+    try:
+        with open(image_path, "rb") as image_file:
+            image_bytes = image_file.read()
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        response = vision_client.responses.create(
+            model=VISION_MODEL,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "Describe this banking document image "
+                                "accurately. Extract any visible text, "
+                                "labels, numbers, tables, charts, or "
+                                "important visual information."
+                            ),
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": (f"data:image/png;base64,{base64_image}"),
+                        },
+                    ],
+                }
+            ],
+        )
+        return response.output_text
+    except Exception as e:
+        print(f"Vision caption error for {image_path}: {e}")
+        return "Image contains banking-related visual information."
 
 
 def extract_scanned_text(file_path):
     """
-    Placeholder OCR pipeline.
-    Future:
-    pytesseract
-    Azure OCR
-    AWS Textract
+    Extract text from scanned PDF pages using Tesseract OCR.
     """
-    return []
+    ocr_documents = []
+    pdf = pymupdf.open(file_path)
+    for page_number, page in enumerate(pdf):
+        existing_text = page.get_text("text").strip()
+        # Only OCR pages that contain little/no extractable text
+        if len(existing_text) > 50:
+            continue
+        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))
+        image = Image.frombytes(
+            "RGB",
+            [pixmap.width, pixmap.height],
+            pixmap.samples,
+        )
+        ocr_text = pytesseract.image_to_string(image).strip()
+        if not ocr_text:
+            continue
+        ocr_documents.append(
+            Document(
+                page_content=ocr_text,
+                metadata={
+                    "source": file_path,
+                    "document_name": os.path.basename(file_path),
+                    "category": "smart_banking",
+                    "content_type": "ocr",
+                    "page": page_number + 1,
+                },
+            )
+        )
+    print("OCR documents:", len(ocr_documents))
+    return ocr_documents
 
 
 def ingest_pdf(file_path):
-    print("==== INGESTION STARTED ====")
+    print("INGESTION STARTED")
     # Create database/table/indexes automatically
     initialize_smart_banking_db()
     documents = load_document(file_path)
-    documents = enrich_metadata(
-        documents,
-        file_path,
-    )
+    documents = enrich_metadata(documents, file_path)
     text_chunks = create_chunks(documents)
     tables = extract_tables(file_path)
     for table in tables:
@@ -207,31 +278,35 @@ def ingest_pdf(file_path):
             Document(
                 page_content=table["content"],
                 metadata={
-                    "type": "table",
+                    "source": file_path,
+                    "content_type": "table",
                     "page": table["page"],
-                    "table_no": table["table_no"],
                 },
             )
         )
     images = extract_images(file_path)
     for image in images:
-        caption = generate_image_caption(image)
+        image_path = image["image_path"]
+        caption = generate_image_caption(image_path)
         text_chunks.append(
             Document(
                 page_content=caption,
                 metadata={
                     "type": "image",
-                    "image_ref": image["image_ref"],
+                    "image_path": image_path,
                     "page": image["page"],
+                    "image_index": image["image_index"],
                 },
             )
         )
-    print(
-        "Total chunks before embeddings:",
-        len(text_chunks),
-    )
+    # NEW OCR STEP
+    ocr_documents = extract_scanned_text(file_path)
+    for ocr_document in ocr_documents:
+        ocr_chunks = create_chunks([ocr_document])
+        text_chunks.extend(ocr_chunks)
+    print("Total chunks before embeddings:", len(text_chunks))
     store_embeddings(text_chunks)
-    print("==== INGESTION COMPLETED ====")
+    print("INGESTION COMPLETED")
     return {
         "file": os.path.basename(file_path),
         "pages": len(documents),

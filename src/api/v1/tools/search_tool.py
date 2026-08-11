@@ -48,7 +48,7 @@ def vector_search_tool(state: RAGState) -> RAGState:
                 chunks.append(
                     {
                         "content": row.content,
-                        "metadata": row.metadata or {},
+                        "metadata": row.metadata,
                         "score": float(row.score),
                         "retrieval_method": "vector",
                     }
@@ -97,7 +97,7 @@ def fts_search_tool(state: RAGState) -> RAGState:
             state["fts_chunks"] = [
                 {
                     "content": row.content,
-                    "metadata": row.metadata or {},
+                    "metadata": row.metadata,
                     "score": float(row.score),
                     "retrieval_method": "fts",
                 }

@@ -1,8 +1,11 @@
 from fastapi import FastAPI
 from src.api.v1.routes import query
 from src.api.v1.routes import upload_routes
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
+
+app.mount("/images", StaticFiles(directory="data/images"), name="images")
 
 
 @app.get("/")
