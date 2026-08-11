@@ -1,22 +1,30 @@
+from pathlib import Path
 from fastapi import FastAPI
-from src.api.v1.routes import query
-from src.api.v1.routes import upload_routes
 from fastapi.staticfiles import StaticFiles
+from src.api.v1.routes import query, upload_routes
 
 app = FastAPI()
 
-app.mount("/images", StaticFiles(directory="data/images"), name="images")
+# Create image directory if it doesn't exist
+IMAGE_DIR = Path("data/images")
+IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Serve extracted images
+app.mount(
+    "/images",
+    StaticFiles(directory=str(IMAGE_DIR)),
+    name="images",
+)
+
+app.include_router(query.router)
+app.include_router(upload_routes.router)
 
 
 @app.get("/")
-def root():
-    return {"message": "Smart Banking Assistant"}
+async def root():
+    return {"message": "Hello World"}
 
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
-
-
-app.include_router(query.router)
-app.include_router(upload_routes.router)

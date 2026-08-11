@@ -4,9 +4,7 @@ from fastapi import UploadFile
 from src.ingestion.ingestion import ingest_pdf
 
 
-async def upload_and_ingest_pdf(
-    file: UploadFile,
-):
+async def upload_and_ingest_pdf(file: UploadFile):
     if not file.filename:
         raise ValueError("No file was provided.")
     if not file.filename.lower().endswith(".pdf"):
@@ -28,11 +26,13 @@ async def upload_and_ingest_pdf(
         result = ingest_pdf(temp_path)
         return {
             "status": "success",
-            "message": ("PDF uploaded and ingested successfully."),
+            "message": "PDF uploaded and ingested successfully.",
             "file_name": file.filename,
-            "pages": result["pages"],
-            "chunks": result["chunks"],
-            "embeddings": result["embeddings"],
+            "pages": result.get("pages", 0),
+            "chunks": result.get("chunks", 0),
+            "embeddings": result.get("embeddings", 0),
+            "tables": result.get("tables", 0),
+            "images": result.get("images", 0),
         }
     finally:
         if temp_path and os.path.exists(temp_path):
