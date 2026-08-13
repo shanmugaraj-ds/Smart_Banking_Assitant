@@ -1,13 +1,16 @@
+import json
 import streamlit as st
 import requests
 
 QUERY_API_URL = "http://127.0.0.1:8000/api/v1/query/"
+QUERY_STREAM_API_URL = "http://127.0.0.1:8000/api/v1/query/stream"
 UPLOAD_API_URL = "http://127.0.0.1:8000/api/v1/upload/"
 
 st.set_page_config(
-    page_title="*** Smart Banking Assistant ***",
+    page_title="Smart Banking Assistant",
     layout="wide",
 )
+
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -15,16 +18,15 @@ if "uploaded_file_name" not in st.session_state:
     st.session_state.uploaded_file_name = None
 if "upload_status" not in st.session_state:
     st.session_state.upload_status = None
-
 st.title("Smart Banking Assistant")
 st.caption(
     "AI-powered banking assistant using LangGraph, "
     "Hybrid RAG, SQL and LLM reasoning."
 )
-# SIDEBAR - KNOWLEDGE BASE UPLOAD
+# SIDEBAR
 with st.sidebar:
     st.header("Knowledge Base")
-    st.write("Upload a Smart Banking PDF to the RAG knowledge base.")
+    st.write("Upload a Smart Banking PDF " "to the RAG knowledge base.")
     st.divider()
     st.subheader("PDF URL")
     uploaded_file = st.file_uploader(
@@ -61,44 +63,47 @@ with st.sidebar:
                     st.error(f"Upload failed: {response.text}")
             except requests.exceptions.RequestException as e:
                 st.error(f"Unable to connect to FastAPI: {e}")
-    # Upload Status
+    # Upload status
     if st.session_state.uploaded_file_name:
         st.divider()
-        st.subheader("📌 Current Knowledge Base")
+        st.subheader("Current Knowledge Base")
         st.write(f"**File:** " f"{st.session_state.uploaded_file_name}")
-    # Clear Chat
+    # Clear chat
     st.divider()
     if st.button(
-        "Clear Chat",
+        "🗑️ Clear Chat",
         use_container_width=True,
     ):
         st.session_state.messages = []
         st.rerun()
-# DISPLAY CHAT HISTORY
 for message in st.session_state.messages:
     role = message["role"]
     with st.chat_message(role):
         st.markdown(message["content"])
         if role == "assistant":
-            images = message.get("images", [])
-            if images:
+            if message.get("images"):
                 st.subheader("Related Images")
-                for image_url in images:
-                    full_image_url = f"http://127.0.0.1:8000{image_url}"
+                for image_url in message["images"]:
                     st.image(
-                        full_image_url,
+                        image_url,
                         caption="Related image",
                         use_container_width=True,
                     )
             if message.get("query_type"):
-                st.caption(f"Query type: " f"{message['query_type'].upper()}")
+                st.caption("Query type: " f"{message['query_type'].upper()}")
+            if message.get("citations"):
+                with st.expander("Sources / Citations"):
+                    for citation in message["citations"]:
+                        st.markdown(f"- {citation}")
+            if message.get("confidence_score") is not None:
+                st.caption("Confidence: " f"{float(message['confidence_score']):.2f}")
 question = st.chat_input("Ask your banking question...")
 # PROCESS QUESTION
 if question:
     question = question.strip()
     if not question:
         st.stop()
-    # Display user message
+    # User message
     st.session_state.messages.append(
         {
             "role": "user",
@@ -107,83 +112,143 @@ if question:
     )
     with st.chat_message("user"):
         st.markdown(question)
-    # Prepare chat history
+    # Chat history
     chat_history = [
         {
             "role": message["role"],
             "content": message["content"],
-            "images": message.get("images", []),
         }
         for message in st.session_state.messages
     ]
+    # Assistant
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                response = requests.post(
-                    QUERY_API_URL,
-                    json={
-                        "question": question,
-                        "chat_history": chat_history,
-                    },
-                    timeout=120,
-                )
-                response.raise_for_status()
-                result = response.json()
-                answer = result.get("answer", "")
-                query_type = result.get("query_type", "")
-                citations = result.get("citations", [])
-                images = result.get("images", [])
-                confidence_score = result.get("confidence_score", None)
-                if answer:
-                    st.markdown(answer)
-                else:
-                    st.warning("No answer was generated.")
-                if images:
-                    st.subheader("Related Images")
-                    for image_url in images:
-                        if image_url.startswith("[") and "](" in image_url:
-                            image_url = image_url.split("](")[1].rstrip(")")
-                        if image_url.startswith("/"):
-                            full_image_url = f"http://127.0.0.1:8000{image_url}"
-                        else:
-                            full_image_url = image_url
-                        print("STREAMLIT IMAGE URL:", full_image_url)
-                        st.image(
-                            full_image_url,
-                            caption="Related image",
-                            use_container_width=True,
+        try:
+            response = requests.post(
+                QUERY_STREAM_API_URL,
+                json={
+                    "question": question,
+                    "chat_history": chat_history,
+                },
+                stream=True,
+                timeout=300,
+            )
+            response.raise_for_status()
+            answer_placeholder = st.empty()
+            status_placeholder = st.empty()
+            final_result = None
+            # Read SSE stream
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:") :].strip()
+                if not data:
+                    continue
+                event = json.loads(data)
+                event_type = event.get("type")
+                # STATUS
+                if event_type == "status":
+                    message = event.get(
+                        "message",
+                        "Processing...",
+                    )
+                    status_placeholder.info(message)
+                # COMPLETE
+                elif event_type == "complete":
+                    final_result = event
+                    status_placeholder.empty()
+                    answer = event.get(
+                        "answer",
+                        "",
+                    )
+                    if answer:
+                        answer_placeholder.markdown(answer)
+                    # Images
+                    images = event.get(
+                        "images",
+                        [],
+                    )
+                    if images:
+                        st.subheader("Related Images")
+                        for image_url in images:
+                            st.image(
+                                image_url,
+                                caption="Related image",
+                                use_container_width=True,
+                            )
+                    # Query type
+                    query_type = event.get(
+                        "query_type",
+                        "",
+                    )
+                    if query_type:
+                        st.caption("Query type: " f"{query_type.upper()}")
+                    # Citations
+                    citations = event.get(
+                        "citations",
+                        [],
+                    )
+                    if citations:
+                        with st.expander("Sources / Citations"):
+                            for citation in citations:
+                                st.markdown(f"- {citation}")
+                    # Confidence
+                    confidence_score = event.get("confidence_score")
+                    if confidence_score is not None:
+                        st.caption("Confidence: " f"{float(confidence_score):.2f}")
+                # ERROR
+                elif event_type == "error":
+                    status_placeholder.empty()
+                    st.error(
+                        event.get(
+                            "message",
+                            "Unknown error",
                         )
-                if query_type:
-                    st.caption(f"Query type: " f"{query_type.upper()}")
-                if citations:
-                    with st.expander("Sources / Citations"):
-                        for citation in citations:
-                            st.markdown(f"- {citation}")
-                if confidence_score is not None:
-                    st.caption(f"Confidence: " f"{float(confidence_score):.2f}")
+                    )
+            # Save complete assistant response
+            if final_result:
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
-                        "content": answer,
-                        "query_type": query_type,
-                        "citations": citations,
-                        "images": images,
-                        "confidence_score": confidence_score,
+                        "content": final_result.get(
+                            "answer",
+                            "",
+                        ),
+                        "query_type": final_result.get(
+                            "query_type",
+                            "",
+                        ),
+                        "citations": final_result.get(
+                            "citations",
+                            [],
+                        ),
+                        "confidence_score": (
+                            final_result.get(
+                                "confidence_score",
+                                0,
+                            )
+                        ),
+                        "images": final_result.get(
+                            "images",
+                            [],
+                        ),
                     }
                 )
-            except requests.exceptions.Timeout:
-                st.error("The request timed out. " "Please try again.")
-            except requests.exceptions.ConnectionError:
-                st.error(
-                    "Unable to connect to the banking "
-                    "assistant API. Please make sure "
-                    "FastAPI is running."
-                )
-            except requests.exceptions.HTTPError:
-                try:
-                    error_detail = response.json()
-                except Exception:
-                    error_detail = response.text
-                st.error(f"API Error: {error_detail}")
-            except Exception as e:
-                st.error(f"Unexpected error: {e}")
+        except requests.exceptions.Timeout:
+            st.error("The request timed out. " "Please try again.")
+        except requests.exceptions.ConnectionError:
+            st.error(
+                "Unable to connect to the "
+                "banking assistant API. "
+                "Please make sure FastAPI "
+                "is running."
+            )
+        except requests.exceptions.HTTPError:
+            try:
+                error_detail = response.json()
+            except Exception:
+                error_detail = response.text
+            st.error(f"API Error: {error_detail}")
+        except Exception as e:
+            st.error(f"Unexpected error: {e}")

@@ -13,45 +13,17 @@ Do not use retrieved documents, SQL results, previous assistant answers,
 or previous conversation answers to decide the classification.
 
 1. conversation
-Choose "conversation" for casual conversation that does not require
-banking knowledge, banking policy documents, or customer database data.
-Examples:
-Question: Hello
-Answer: conversation
-
-Question: Hi
-Answer: conversation
-
-Question: Good morning
-Answer: conversation
-
-Question: How are you?
-Answer: conversation
-
-Question: Thanks
-Answer: conversation
-
-Question: Thank you
-Answer: conversation
-
-Question: My name is John
-Answer: conversation
-
-Question: What is my name?
-Answer: conversation
-
-Question: Nice to meet you
-Answer: conversation
-
-Question: Bye
-Answer: conversation
+Choose "conversation" for casual conversation that does not require banking knowledge or database.
+For:
+- greetings
+- user introduction
+- remembering user's name
+- thanks
+- casual conversation
 
 IMPORTANT:
-conversation MUST NOT call RAG tools.
-conversation MUST NOT call SQL tools.
-conversation MUST NOT call vector search.
-conversation MUST NOT call FTS search.
-conversation MUST NOT call reranker.
+Use previous chat history always for conversation. 
+conversation MUST NOT call any tool.
 
 2. OUT_OF_SCOPE
 Choose "out_of_scope" when the question is unrelated to the
@@ -84,11 +56,7 @@ Question: What is the capital of France?
 Answer: out_of_scope
 
 IMPORTANT:
-Out-of-scope MUST NOT call RAG tools.
-Out-of-scope MUST NOT call SQL tools.
-Out-of-scope MUST NOT call vector search.
-Out-of-scope MUST NOT call FTS search.
-Out-of-scope MUST NOT call reranker.
+Out-of-scope MUST NOT call any tool.
 
 3. RAG
 Use RAG when the query requires information from banking documents,
@@ -185,7 +153,7 @@ Answer: hybrid
 Use this decision order:
 STEP 1:
 Is this casual conversation, greeting, thanks, introduction, or goodbye?
-YES -> chitchat
+YES -> conversation
 STEP 2:
 Is this unrelated to Smart Banking Assistant capabilities?
 YES -> out_of_scope
@@ -240,11 +208,10 @@ Never classify an out-of-scope question as rag, sql, or hybrid.
 Do not classify based only on banking keywords.
 
 Return ONLY ONE exact value:
-
 rag
 sql
 hybrid
-chitchat
+conversation
 out_of_scope
 
 Question:
