@@ -9,8 +9,11 @@ of these categories:
 * hybrid
 IMPORTANT:
 Classification must be based primarily on the CURRENT USER QUESTION.
-Do not use retrieved documents, SQL results, previous assistant answers,
-or previous conversation answers to decide the classification.
+Previous chat history may be used ONLY to understand conversational
+context, references, or follow-up questions.
+Do NOT use retrieved documents, SQL results, previous assistant answers,
+or tool outputs to determine classification.
+The classifier must decide the route BEFORE RAG or SQL tools are called.
 
 1. conversation
 Choose "conversation" for casual conversation that does not require banking knowledge or database.
@@ -22,8 +25,7 @@ For:
 - casual conversation
 
 IMPORTANT:
-Use previous chat history always for conversation. 
-conversation MUST NOT call any tool.
+conversation quiries MUST NOT call any tool.
 
 2. OUT_OF_SCOPE
 Choose "out_of_scope" when the question is unrelated to the
@@ -59,18 +61,26 @@ IMPORTANT:
 Out-of-scope MUST NOT call any tool.
 
 3. RAG
-Use RAG when the query requires information from banking documents,
-products, policies, procedures, FAQs, loan details, card details,
-terms and conditions, eligibility, documentation requirements,
-or regulatory information.
+Choose "rag" when the answer requires information from the
+Smart Banking knowledge base or banking documents.
 
-Examples:
-- Home loan products
-- Gold loan auction rules
-- Credit card eligibility
-- Required documents for personal loan
-- Loan tenure details
-- KYC requirements
+This includes:
+- banking products
+- banking policies
+- procedures
+- FAQs
+- loan information
+- card information
+- terms and conditions
+- eligibility criteria
+- documentation requirements
+- charges
+- fees
+- rules
+- regulatory information
+- RBI guidelines
+- KYC information
+- product features
 
 Examples:
 
@@ -150,23 +160,7 @@ Question: Show my loan account and explain RBI foreclosure guidelines.
 Answer: hybrid
 
 6. ROUTING DECISION
-Use this decision order:
-STEP 1:
-Is this casual conversation, greeting, thanks, introduction, or goodbye?
-YES -> conversation
-STEP 2:
-Is this unrelated to Smart Banking Assistant capabilities?
-YES -> out_of_scope
-STEP 3:
-Does the answer require ONLY banking document/policy knowledge?
-YES -> rag
-STEP 4:
-Does the answer require ONLY customer-specific database information?
-YES -> sql
-STEP 5:
-Does the answer require BOTH customer-specific database information
-AND banking document/policy knowledge?
-YES -> hybrid
+
 
 7. IMPORTANT DISTINCTIONS
 "Hello"
@@ -192,17 +186,40 @@ YES -> hybrid
 "Show my credit card and explain international transaction charges"
 -> hybrid
 
+8. FOLLOW-UP QUESTIONS
+Use chat history to understand short or incomplete follow-up questions.
+Example conversation:
 
--> Short banking keywords must NOT be classified as out_of_scope.
+User: Explain home loan eligibility.
+Assistant: [previous response]
+User: What about the documents?
+Answer: rag
+Example:
+User: Show my home loan balance.
+Assistant: [previous response]
+User: What is the foreclosure charge?
+Answer: rag
+Example:
+User: Show my home loan balance and explain eligibility.
+Answer: hybrid
+
+IMPORTANT:
+A previous SQL or RAG question does NOT automatically determine
+the classification of the current question.
+Always classify the CURRENT USER QUESTION based on its meaning.
+
+9. SHORT BANKING KEYWORDS
+Short banking keywords MUST NOT be classified as out_of_scope.
 Examples:
-"Home Loan" → rag
-"Credit Card" → rag
-"KYC" → rag
-"Gold Loan" → rag
-"Loan" → rag
-"PAN Card" → rag
+Question: Home Loan
+Answer: rag
+Question: Credit Card
+Answer: rag
+Question: KYC
+Answer: rag
 
-8. FINAL RULE
+
+FINAL RULE
 Never classify a greeting or casual conversation as rag, sql, or hybrid.
 Never classify an out-of-scope question as rag, sql, or hybrid.
 Do not classify based only on banking keywords.
@@ -216,22 +233,48 @@ out_of_scope
 
 Question:
 {question}
+
+CHAT HISTORY:
+{chat_history}
 """
 
 
 SQL_GENERATOR_PROMPT = """
-You are an expert PostgreSQL query generator for a banking system.
-Your job is to generate ONLY a valid PostgreSQL SELECT query.
-Rules:
-1. Generate ONLY SELECT statements.
-2. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE or GRANT.
-3. Use only the provided database schema.
-4. Do not assume tables or columns that are not present.
-5. Do not include markdown or explanations.
-6. Return only the SQL query.
+CUSTOMER CONTEXT:
+The current customer ID is:
+{account_id}
+
+IMPORTANT CUSTOMER-SCOPING RULE:
+If the user asks for customer-specific information using words such as:
+- my
+- me
+- mine
+- my account
+- my loan
+- my credit card
+- my transactions
+
+then the generated SQL MUST restrict the query to the current customer.
+Use the current customer ID:
+{account_id}
+to filter the appropriate customer/account column.
+Examples:
+If the table contains account_id:
+WHERE account_id = '{account_id}'
+If the table contains customer_id:
+WHERE customer_id = '{account_id}'
+If the table contains a relationship between customer and account,
+use the appropriate JOIN and filter using the current customer ID.
+NEVER return records belonging to other customers when the user asks
+for "my" information.
+If customer-specific information is requested but customer_id is
+missing, do NOT guess a customer. Return a query that cannot expose
+other customers, or indicate that customer identification is required.
 
 Database Schema:
 {schema}
+Current Customer ID:
+{account_id}
 User Question:
 {question}
 """
@@ -240,20 +283,28 @@ User Question:
 SQL_VALIDATOR_PROMPT = """
 You are a PostgreSQL security validator.
 Your task is to validate the generated SQL query.
-Rules:
-1. ONLY SELECT statements are allowed.
-2. Reject:
-- INSERT
-- UPDATE
-- DELETE
-- DROP
-- ALTER
-- CREATE
-- TRUNCATE
-- GRANT
-- REVOKE
-3. Do not modify correct SQL.
-4. Return ONLY the validated SQL query.
+IMPORTANT RULES:
+
+1. Generate READ-ONLY PostgreSQL queries only.
+2. The query must retrieve customer/account-specific
+   information from the core banking database.
+3. Do NOT determine banking policy, eligibility,
+   regulatory requirements, fees, charges, or procedures
+   from SQL.
+4. Those policy-related questions are handled by RAG.
+5. For a hybrid question, SQL should retrieve ONLY the
+   customer-specific database information required by
+   the question.
+6. Never calculate or invent eligibility criteria using SQL
+   unless the requested value is explicitly stored in the
+   database.
+7. The account identifier is account_id.
+8. Never use customer_id.
+9. If account_id is available in the state/request, use it.
+10. Only generate SELECT or WITH ... SELECT statements.
+11. Never generate INSERT, UPDATE, DELETE, DROP, ALTER,
+    CREATE, TRUNCATE, GRANT, or REVOKE.
+12. Do not generate explanatory text outside the SQL query.
 
 Generated SQL:
 

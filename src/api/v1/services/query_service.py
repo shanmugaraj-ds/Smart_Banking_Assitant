@@ -1,49 +1,21 @@
-# from src.api.v1.agents.agents import banking_agent
-
-
-# def query_documents(question):
-#     response = banking_agent.invoke(
-#         {
-#             "question": question,
-#             "search_query": question,
-#             "query_type": "",
-#             "retrieved_chunks": [],
-#             "fts_chunks": [],
-#             "hybrid_chunks": [],
-#             "reranked_chunks": [],
-#             "rewritten_queries": [],
-#             "sql_query": "",
-#             "validated_sql": "",
-#             "sql_result": [],
-#             "answer": "",
-#             "citations": [],
-#             "response_sources": [],
-#             "confidence_score": 0,
-#             "retry_count": 0,
-#             "max_retries": 2,
-#             "trace_id": "",
-#         }
-#     )
-#     return {
-#         "answer": response.get("answer", ""),
-#         "query_type": response.get("query_type", ""),
-#         "citations": response.get("citations", []),
-#         "images": response.get("response_sources", []),
-#         "confidence_score": response.get("confidence_score", 0),
-#     }
-
 import json
 from src.api.v1.agents.agents import banking_agent
 
 
-def build_initial_state(question: str):
+def build_initial_state(
+    question: str,
+    account_id: str | None = None,
+    chat_history: list | None = None,
+):
     return {
         "question": question,
         "search_query": question,
         "query_type": "",
+        "account_id": account_id,
         "retrieved_chunks": [],
         "fts_chunks": [],
         "hybrid_chunks": [],
+        "chat_history": chat_history or [],
         "reranked_chunks": [],
         "rewritten_queries": [],
         "sql_query": "",
@@ -59,8 +31,18 @@ def build_initial_state(question: str):
     }
 
 
-def query_documents(question: str):
-    response = banking_agent.invoke(build_initial_state(question))
+def query_documents(
+    question: str,
+    account_id: str | None = None,
+    chat_history: list | None = None,
+):
+    response = banking_agent.invoke(
+        build_initial_state(
+            question,
+            account_id=account_id,
+            chat_history=chat_history,
+        )
+    )
     return {
         "answer": response.get("answer", ""),
         "query_type": response.get("query_type", ""),
@@ -70,12 +52,18 @@ def query_documents(question: str):
     }
 
 
-async def query_documents_stream(question: str):
-    initial_state = build_initial_state(question)
-    # Initial status
+async def query_documents_stream(
+    question: str,
+    account_id: str | None = None,
+    chat_history: list | None = None,
+):
+    initial_state = build_initial_state(
+        question,
+        account_id=account_id,
+        chat_history=chat_history,
+    )
     yield {"type": "status", "message": "Understanding your query..."}
     final_state = initial_state.copy()
-    # Stream LangGraph node updates
     async for update in banking_agent.astream(
         initial_state,
         stream_mode="updates",

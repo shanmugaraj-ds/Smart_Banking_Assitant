@@ -25,6 +25,13 @@ st.caption(
 )
 # SIDEBAR
 with st.sidebar:
+    st.header("Customer Details")
+    account_id = st.text_input(
+        "Account ID",
+        value="1345367",
+        placeholder="Enter account ID",
+    )
+    st.divider()
     st.header("Knowledge Base")
     st.write("Upload a Smart Banking PDF " "to the RAG knowledge base.")
     st.divider()
@@ -71,7 +78,7 @@ with st.sidebar:
     # Clear chat
     st.divider()
     if st.button(
-        "🗑️ Clear Chat",
+        "Clear Chat",
         use_container_width=True,
     ):
         st.session_state.messages = []
@@ -128,6 +135,7 @@ if question:
                 json={
                     "question": question,
                     "chat_history": chat_history,
+                    "account_id": account_id.strip() if account_id else None,
                 },
                 stream=True,
                 timeout=300,

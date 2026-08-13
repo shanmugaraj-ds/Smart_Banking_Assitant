@@ -34,7 +34,8 @@ class RetrievedChunk(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
-    chat_history: list = []
+    chat_history: list = Field(default_factory=list)
+    account_id: str | None = None
 
 
 class QueryResponse(BaseModel):

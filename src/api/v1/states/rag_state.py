@@ -4,7 +4,9 @@ from typing import TypedDict, List, Dict, Any
 class RAGState(TypedDict, total=False):
     question: str  # User Input
     search_query: str
-    query_type: str  # rag | sql | hybrid
+    account_id: str | None
+    query_type: str
+    chat_history: List[Dict[str, Any]]
     retrieved_chunks: List[Dict[str, Any]]  # RAG Pipeline
     fts_chunks: List[Dict[str, Any]]  # RAG Pipeline
     hybrid_chunks: List[Dict[str, Any]]  # RAG Pipeline
@@ -20,4 +22,4 @@ class RAGState(TypedDict, total=False):
     retry_count: int  # Retry
     trace_id: str  # LangSmith
     max_retries: int
-    final_context: dict
+    final_context: dict[str, Any]

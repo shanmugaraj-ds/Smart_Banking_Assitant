@@ -1,21 +1,3 @@
-# from fastapi import APIRouter
-# from src.api.v1.schemas.query_schema import QueryRequest, QueryResponse
-# from src.api.v1.services.query_service import query_documents
-
-# router = APIRouter(prefix="/api/v1/query")
-
-
-# @router.post("/", response_model=QueryResponse)
-# def query_endpoint(request: QueryRequest):
-#     answer = query_documents(request.question)
-#     return QueryResponse(
-#         answer=answer["answer"],
-#         query_type=answer["query_type"],
-#         citations=answer.get("citations", []),
-#         images=answer.get("images", []),
-#         confidence_score=answer.get("confidence_score", 0.0),
-#     )
-
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 import json
@@ -40,7 +22,11 @@ router = APIRouter(
     response_model=QueryResponse,
 )
 async def query(request: QueryRequest):
-    return query_documents(request.question)
+    return query_documents(
+        request.question,
+        account_id=request.account_id,
+        chat_history=request.chat_history,
+    )
 
 
 # STREAMING QUERY
@@ -50,7 +36,11 @@ async def query_stream(
 ):
     async def event_generator():
         try:
-            async for event in query_documents_stream(request.question):
+            async for event in query_documents_stream(
+                request.question,
+                account_id=request.account_id,
+                chat_history=request.chat_history,
+            ):
                 yield (f"data: " f"{json.dumps(event)}" f"\n\n")
         except Exception as e:
             error_event = {

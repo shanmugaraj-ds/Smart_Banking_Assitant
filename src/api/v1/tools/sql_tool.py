@@ -50,41 +50,13 @@ def sql_generator_tool(state: RAGState) -> RAGState:
         {
             "question": state["question"],
             "schema": schema,
+            "account_id": state.get("account_id", ""),
         }
     )
     state["sql_query"] = result.sql_query
-    return state
-
-
-def sql_validator_tool(state: RAGState) -> RAGState:
-    """
-    Validates generated SQL using the LLM validator
-    and deterministic safety checks.
-    """
-    llm = get_llm()
-    structured_llm = llm.with_structured_output(SQLValidation)
-    prompt = ChatPromptTemplate.from_template(SQL_VALIDATOR_PROMPT)
-    validator_chain = prompt | structured_llm
-    result = validator_chain.invoke({"sql_query": state["sql_query"]})
-    validated_sql = result.validated_sql.strip()
-    # Remove trailing semicolon for consistent validation.
-    normalized_sql = validated_sql.rstrip(";").strip()
-    # Only SELECT statements are permitted.
-    if not re.match(
-        r"^SELECT\b",
-        normalized_sql,
-        flags=re.IGNORECASE,
-    ):
-        raise ValueError("Only SELECT statements are permitted.")
-    # Block potentially destructive SQL.
-    sql_upper = normalized_sql.upper()
-    for keyword in FORBIDDEN_SQL_KEYWORDS:
-        if re.search(
-            rf"\b{keyword}\b",
-            sql_upper,
-        ):
-            raise ValueError(f"Forbidden SQL operation detected: {keyword}")
-    state["validated_sql"] = normalized_sql
+    print("QUESTION:", state.get("question"))
+    print("ACCOUNT ID FROM STATE:", repr(state.get("account_id")))
+    print("GENERATED SQL:", state.get("sql_query"))
     return state
 
 
@@ -102,4 +74,56 @@ def sql_executor_tool(state: RAGState) -> RAGState:
     except Exception as error:
         state["sql_result"] = []
         state["answer"] = f"SQL Execution Error: {str(error)}"
+    return state
+
+
+def sql_validator_tool(state: RAGState) -> RAGState:
+    """
+    Validates generated SQL using the LLM validator
+    and deterministic safety checks.
+    Allows:
+    - SELECT
+    - WITH ... SELECT (CTEs)
+    Blocks all write/destructive operations.
+    """
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(SQLValidation)
+    prompt = ChatPromptTemplate.from_template(SQL_VALIDATOR_PROMPT)
+    validator_chain = prompt | structured_llm
+    result = validator_chain.invoke(
+        {
+            "sql_query": state["sql_query"],
+        }
+    )
+    validated_sql = result.validated_sql.strip()
+    # Remove trailing semicolon
+    normalized_sql = validated_sql.rstrip(";").strip()
+    if not normalized_sql:
+        raise ValueError("Generated SQL is empty.")
+    sql_upper = normalized_sql.upper()
+    is_select = re.match(
+        r"^SELECT\b",
+        normalized_sql,
+        flags=re.IGNORECASE,
+    )
+    is_cte_select = re.match(
+        r"^WITH\b",
+        normalized_sql,
+        flags=re.IGNORECASE,
+    )
+    if not is_select and not is_cte_select:
+        raise ValueError(
+            "Only SELECT statements or WITH ... SELECT " "statements are permitted."
+        )
+    for keyword in FORBIDDEN_SQL_KEYWORDS:
+        if re.search(
+            rf"\b{keyword}\b",
+            sql_upper,
+        ):
+            raise ValueError(f"Forbidden SQL operation detected: {keyword}")
+    if ";" in normalized_sql:
+        raise ValueError("Multiple SQL statements are not permitted.")
+    state["validated_sql"] = normalized_sql
+    print("VALIDATED SQL:")
+    print(state["validated_sql"])
     return state
